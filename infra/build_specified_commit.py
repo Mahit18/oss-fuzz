@@ -138,6 +138,21 @@ def copy_src_from_docker(project_name, host_dir):
   ]
   helper.docker_run(docker_args)
 
+  # Change owner of the source code direcrtory
+  user_id = os.getuid()
+  group_id = os.getgid()
+
+  docker_args = [
+      '-v',
+      host_dir + ':/out',
+      image_name,
+      'chown',
+      '-R',
+      str(user_id) + ':' + str(group_id),
+      '/out',
+  ]
+  helper.docker_run(docker_args)
+
   # Submodules can have gitdir entries which point to absolute paths. Make them
   # relative, as otherwise we can't do operations on the checkout on the host.
   _make_gitdirs_relative(src_dir)
@@ -179,7 +194,7 @@ def get_required_post_checkout_steps(dockerfile_path):
 
 # pylint: disable=too-many-locals
 def build_fuzzers_from_commit(commit,
-                              build_repo_manager,
+                              build_repo_manager: repo_manager.RepoManager,
                               host_src_path,
                               build_data,
                               base_builder_repo=None):
@@ -389,22 +404,31 @@ def main():
   if not repo_url or not repo_path:
     raise ValueError('Main git repo can not be determined.')
 
-  with tempfile.TemporaryDirectory() as tmp_dir:
-    host_src_dir = copy_src_from_docker(args.project_name, tmp_dir)
-    build_repo_manager = repo_manager.RepoManager(
-        os.path.join(host_src_dir, os.path.basename(repo_path)))
-    base_builder_repo = load_base_builder_repo()
+  print(repo_url)
+  print(repo_path)
 
-    build_data = BuildData(project_name=args.project_name,
-                           engine=args.engine,
-                           sanitizer=args.sanitizer,
-                           architecture=args.architecture)
-    if not build_fuzzers_from_commit(args.commit,
-                                     build_repo_manager,
-                                     host_src_dir,
-                                     build_data,
-                                     base_builder_repo=base_builder_repo):
-      raise RuntimeError('Failed to build.')
+  script_dir = os.path.dirname(os.path.realpath(__file__))
+  root_dir = os.path.dirname(script_dir)
+  tmp_dir = os.path.join(root_dir, 'setup_tmp')
+  os.makedirs(tmp_dir, exist_ok=True)
+
+  host_src_dir = copy_src_from_docker(args.project_name, tmp_dir)
+  build_repo_manager = repo_manager.RepoManager(
+      os.path.join(host_src_dir, os.path.basename(repo_path)))
+  base_builder_repo = load_base_builder_repo()
+
+  build_data = BuildData(project_name=args.project_name,
+                          engine=args.engine,
+                          sanitizer=args.sanitizer,
+                          architecture=args.architecture)
+  if not build_fuzzers_from_commit(args.commit,
+                                    build_repo_manager,
+                                    host_src_dir,
+                                    build_data,
+                                    base_builder_repo=base_builder_repo):
+    raise RuntimeError('Failed to build.')
+
+  shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 if __name__ == '__main__':
